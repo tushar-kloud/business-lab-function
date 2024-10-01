@@ -5,10 +5,6 @@
 azure-functions
 azure-storage-blob
 python-dotenv
-PyPDF2
+PyMuPDF
 pandas
 numpy
-# mistralai
-# requests
-# numpy
-# faiss

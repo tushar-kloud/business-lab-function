@@ -2,9 +2,9 @@ import azure.functions as func
 import logging
 from dotenv import load_dotenv
 import pandas as pd
-from io import StringIO
-import PyPDF2
+from io import StringIO, BytesIO
 import os
+import fitz
 import json
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions 
 
@@ -122,14 +122,56 @@ def get_file_context(req: func.HttpRequest) -> func.HttpResponse:
         blob_service_client = BlobServiceClient.from_connection_string(BLOB_STORAGE_CONNECTION_STRING)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
-        blob_data = blob_client.download_blob().content_as_text()
-
+        
         context_data = ''
 
         if blob_name.endswith('.csv'):
+            blob_data = blob_client.download_blob().content_as_text()
             # Handle CSV file
             csv_data = pd.read_csv(StringIO(blob_data))
-            context_data = csv_data.head(10).to_string(index=False)
+            context_data = csv_data.head(600).to_string(index=False)
+        elif blob_name.endswith('.pdf'):
+            # blob_client = container_client.get_blob_client(blob_name)
+            blob_pdf_data = blob_client.download_blob().readall()
+            
+            # Open the PDF file from bytes using BytesIO
+            doc = fitz.open(stream=BytesIO(blob_pdf_data), filetype="pdf")
+            full_text = ""
+
+            # Extract text from each page
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                full_text += page.get_text()
+
+                # Stop when we reach 5000 words
+                if len(full_text.split()) > 5000:
+                    break
+
+            # Close the PDF document
+            doc.close()
+            words = full_text.split()
+            first_5000_words = ' '.join(words[:5000])
+
+            # print('pdf: ',first_5000_words)
+            context_data = first_5000_words
+
+
+            # blob_stream = BytesIO(blob_pdf_data)  # Treat the blob data as a binary stream
+            # pdf_reader = PyPDF2.PdfFileReader(blob_stream)
+        
+            # # Initialize an empty string to store the extracted text
+            # context_data = ""
+        
+            # # Extract text from the first page (or more if needed)
+            # for page_num in range(min(1, pdf_reader.getNumPages())):  # Adjust the range if you want more pages
+            #     page = pdf_reader.getPage(page_num)
+            #     context_data += page.extract_text()
+        
+            # # Process the extracted text
+            # context_data = re.sub(r'\s+', ' ', context_data).strip()  # Normalize whitespace
+            # context_data = ' '.join(context_data.split()[:5000])  # Limit to 5000 characters
+
+            # print('context: ', context_data)
         else:
             return func.HttpResponse(
                 f'Do not have support for this file type yet',
