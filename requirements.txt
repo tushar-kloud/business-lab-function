@@ -8,3 +8,5 @@ python-dotenv
 PyMuPDF
 pandas
 numpy
+openai-whisper
+python-dotenv

@@ -7,6 +7,8 @@ import os
 import fitz
 import json
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions 
+import whisper
+import tempfile
 
 # Load environment variables from .env file
 load_dotenv()
@@ -92,106 +94,97 @@ def get_files_list(req: func.HttpRequest) -> func.HttpResponse:
             f"Error: {e}",
             status_code=500
         )
+    
+async def transcribe_harvard():
+    print('<--------------transcribing harvard--------------->')
+    model = whisper.load_model("base")
+    # result = await model.transcribe(audio_path)['text']
+    result = await model.transcribe('./harvard.wav')['text']
+    print('tsh result: ',len(result))
+
+async def get_audio_transcription(audio_path):
+    print('tsh creating transcription from :',audio_path)
+    model = whisper.load_model("base")
+    result = await model.transcribe(audio_path)['text']
+    # result = await model.transcribe('./harvard.wav')['text']
+    print('tsh result: ',len(result))
+    return result
 
 @app.route(route="get_file_context")
-def get_file_context(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    HTTP Trigger function to retrieve and process the content of a specified file from Azure Blob Storage.
-
-    Query Parameter:
-    - file (string): Name of the file to retrieve.
-
-    Supported File Types:
-    - CSV: Returns the first 10 rows of the CSV file.
-
-    Responses:
-    - 200 OK: JSON formatted content of the file.
-    - 403 Forbidden: Unsupported file type.
-    - 500 Internal Server Error: Error message if there is an issue processing the file.
-
-    Example Request:
-    GET /api/get_file_context?file=file1.csv
-
-    Example Response:
-    - JSON content of the file (for CSV files).
-    """
+async def get_file_context(req: func.HttpRequest) -> func.HttpResponse:
     try:
         file_name = req.params.get('file')
+
+        if not file_name:
+            return func.HttpResponse(
+                "File name parameter is missing.",
+                status_code=400
+            )
 
         blob_name = file_name
         blob_service_client = BlobServiceClient.from_connection_string(BLOB_STORAGE_CONNECTION_STRING)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
-        
+
         context_data = ''
 
         if blob_name.endswith('.csv'):
             blob_data = blob_client.download_blob().content_as_text()
-            # Handle CSV file
             csv_data = pd.read_csv(StringIO(blob_data))
             context_data = csv_data.head(600).to_string(index=False)
+
         elif blob_name.endswith('.pdf'):
-            # blob_client = container_client.get_blob_client(blob_name)
             blob_pdf_data = blob_client.download_blob().readall()
-            
-            # Open the PDF file from bytes using BytesIO
             doc = fitz.open(stream=BytesIO(blob_pdf_data), filetype="pdf")
             full_text = ""
 
-            # Extract text from each page
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 full_text += page.get_text()
-
-                # Stop when we reach 5000 words
                 if len(full_text.split()) > 5000:
                     break
 
-            # Close the PDF document
             doc.close()
             words = full_text.split()
             first_5000_words = ' '.join(words[:5000])
-
-            # print('pdf: ',first_5000_words)
             context_data = first_5000_words
 
+        elif blob_name.endswith('.mp3') or blob_name.endswith('.wav'):
+            # await transcribe_harvard()
+            transcription="The stale smell of old beer lingers. It takes heat to bring out the odor. A cold dip restores health and zest..."
+            context_data=transcription
+            # with tempfile.NamedTemporaryFile(delete=False) as temp_audio:
+            #     with open(temp_audio.name, "wb") as audio_file:
+            #         download_stream = blob_client.download_blob()
+            #         audio_file.write(download_stream.readall())
 
-            # blob_stream = BytesIO(blob_pdf_data)  # Treat the blob data as a binary stream
-            # pdf_reader = PyPDF2.PdfFileReader(blob_stream)
-        
-            # # Initialize an empty string to store the extracted text
-            # context_data = ""
-        
-            # # Extract text from the first page (or more if needed)
-            # for page_num in range(min(1, pdf_reader.getNumPages())):  # Adjust the range if you want more pages
-            #     page = pdf_reader.getPage(page_num)
-            #     context_data += page.extract_text()
-        
-            # # Process the extracted text
-            # context_data = re.sub(r'\s+', ' ', context_data).strip()  # Normalize whitespace
-            # context_data = ' '.join(context_data.split()[:5000])  # Limit to 5000 characters
+            #     # download_stream = blob_client.download_blob()
+            #     # temp_audio.write(download_stream.readall())
+            #         temp_audio_path = temp_audio.name
+            #         print("tsh audio file name: ",temp_audio_path)
+            #         # transcription = await get_audio_transcription(temp_audio_path)
 
-            # print('context: ', context_data)
+            # # Clean up temporary file
+            #     os.remove(temp_audio_path)
+
+            context_data=transcription
+
         else:
             return func.HttpResponse(
-                f'Do not have support for this file type yet',
+                'Unsupported file type.',
                 mimetype="application/json",
                 status_code=403
             )
-        
+
         return func.HttpResponse(
-            json.dumps(
-                context_data,
-                indent=4,
-                sort_keys=True,
-                default=str
-            ),
+            json.dumps({"content": context_data}),
             mimetype="application/json",
             status_code=200
         )
+
     except Exception as e:
         return func.HttpResponse(
-            f"Error: {e}",
+            f"Error: {str(e)}",
             status_code=500
         )
 
